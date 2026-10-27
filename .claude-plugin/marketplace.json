@@ -1,0 +1,7 @@
+{
+  "name": "skillcheck",
+  "owner": {"name": "Noem836"},
+  "plugins": [
+    {"name": "skillcheck", "source": "./", "description": "Does your skill actually fire next to your other skills? Real CLI trigger runs, who-stole-it, before/after."}
+  ]
+}

@@ -8,12 +8,24 @@ skillcheck runs your prompts through your real `claude` and `codex` CLIs with ev
 
 [Example report](https://skillcheck-d1d57e.fly.dev/r/S1FWWO2UHQKwhlM3eBCXtw): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
 
-## Use
+## Install
 
-One file, Python 3 standard library (PyYAML is used for frontmatter checks if installed).
+As a Claude Code plugin (the `skillcheck` skill walks you through scan → run → fix → re-run):
+
+```
+/plugin install skillcheck --marketplace Noem836/skillcheck
+```
+
+Or as one file (Python 3 standard library; PyYAML is used for frontmatter checks if installed). Pin a release and check its hash:
 
 ```bash
-curl -O https://raw.githubusercontent.com/Noem836/skillcheck/main/skillcheck.py
+curl -fsSLO https://raw.githubusercontent.com/Noem836/skillcheck/v0.1.0/skillcheck.py
+shasum -a 256 skillcheck.py   # compare with the release notes
+```
+
+## Use
+
+```bash
 python3 skillcheck.py scan                          # static checks, no model calls
 python3 skillcheck.py gen --skills my-skill         # draft should-fire / near-miss prompts → suite.json
 python3 skillcheck.py run --agent claude --tag before --runs 3

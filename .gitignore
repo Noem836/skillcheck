@@ -7,3 +7,4 @@ __pycache__/
 *.db
 skillcheck_results.jsonl
 suite.json
+!skills/*/SKILL.md
