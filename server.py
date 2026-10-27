@@ -55,8 +55,8 @@ pre{background:var(--code);padding:12px 14px;border-radius:8px;overflow-x:auto;f
 In our own test, 21/21 prompts fired in an isolated eval; the same prompts missed 5 times in the real harness.</p>
 <p><strong>skillcheck</strong> runs your prompts through your real <code>claude</code> and <code>codex</code> CLIs, with all your skills loaded, and tells you which skill fired, which one stole the request, and whether your fix helped.</p>
 <p><a href="/r/{demo}">See an example report</a> — two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.</p>
-<h2>Try it (one file, Python 3 stdlib)</h2>
-<pre>curl -O {site}/skillcheck.py
+<h2>Try it (one file, Python 3 stdlib — <a href="https://github.com/Noem836/skillcheck">source on GitHub</a>)</h2>
+<pre>curl -O https://raw.githubusercontent.com/Noem836/skillcheck/main/skillcheck.py
 python3 skillcheck.py scan                      # static checks, no model calls
 python3 skillcheck.py gen --skills my-skill     # draft should-fire / near-miss prompts
 python3 skillcheck.py run --agent claude --tag before

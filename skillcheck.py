@@ -350,7 +350,7 @@ h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px}p{color:var
 th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--mute);font-weight:500}
 .bad{color:var(--bad)}.good{color:var(--good)}small{color:var(--mute)}a{color:inherit}footer{margin-top:32px;color:var(--mute);font-size:14px}
 </style></head><body><h1>skillcheck report</h1><p>{sub}</p>{body}
-<footer>Do your agent skills actually fire in your real setup? <a href="{site}/">Check yours with skillcheck</a> — free, runs locally with your own Claude Code / Codex.</footer>
+<footer>Do your agent skills actually fire in your real setup? <a href="{site}/">Check yours with skillcheck</a> (<a href="https://github.com/Noem836/skillcheck">GitHub</a>) — free, runs locally with your own Claude Code / Codex.</footer>
 <script type="application/json" id="skillcheck-data">{data}</script></body></html>""".replace("{site}", SITE)
 
 
