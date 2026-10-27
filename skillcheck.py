@@ -272,8 +272,8 @@ def agent_cmd(agent, text, cwd, model):
 
 def run_once(agent, text, cwd, model, timeout=240):
     cmd, pick = agent_cmd(agent, text, cwd, model), claude_pick if agent == "claude" else codex_pick
-    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, text=True)
+    err = tempfile.TemporaryFile("w+")
+    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True)
     timer = __import__("threading").Timer(timeout, proc.kill)
     timer.start()
     try:
@@ -281,11 +281,17 @@ def run_once(agent, text, cwd, model, timeout=240):
             name = pick(line)
             if name:
                 return name  # stop before the skill does any work
-        return "none" if proc.wait() == 0 else "ERROR"
+        if proc.wait() == 0:
+            return "none"
+        err.seek(0)
+        tail = " ".join(err.read()[-300:].split())
+        print(f"   {agent} exited {proc.returncode}: {tail or '(no stderr; killed after timeout?)'}", file=sys.stderr, flush=True)
+        return "ERROR"
     finally:
         timer.cancel()
         proc.kill()
         proc.wait()
+        err.close()
 
 
 def load_suite(path):
@@ -302,7 +308,7 @@ def read_rows(path=None):
 def run(args):
     out = Path(args.results)
     done = {(r["agent"], r["id"], r["run"]) for r in read_rows(out) if r["tag"] == args.tag}
-    cwd = Path(args.cwd) if args.cwd else SANDBOX_dir()
+    cwd = Path(args.cwd).resolve() if args.cwd else SANDBOX_dir()  # absolute: codex also gets it via -C
     todo = [(c, k) for c in load_suite(args.suite) for k in range(args.runs) if (args.agent, c["id"], k) not in done]
     for n, (case, k) in enumerate(todo, 1):
         picked = run_once(args.agent, case["text"], cwd, args.model)
