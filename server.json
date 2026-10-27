@@ -2,9 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Noem836/skillcheck",
   "title": "skillcheck",
-  "description": "Check Claude Code / Codex SKILL.md files in a GitHub repo for issues that stop them triggering.",
+  "description": "Before installing an agent skill, see which of your skills it will clash with; static checks of SKILL.md repos.",
   "version": "0.1.0",
-  "repository": {"url": "https://github.com/Noem836/skillcheck", "source": "github"},
+  "repository": {
+    "url": "https://github.com/Noem836/skillcheck",
+    "source": "github"
+  },
   "websiteUrl": "https://skillcheck-d1d57e.fly.dev",
-  "remotes": [{"type": "streamable-http", "url": "https://skillcheck-d1d57e.fly.dev/mcp"}]
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://skillcheck-d1d57e.fly.dev/mcp"
+    }
+  ]
 }
