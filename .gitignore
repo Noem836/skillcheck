@@ -1,0 +1,9 @@
+# internal notes and measurements from the author's own harness
+*.md
+!README.md
+smoke/
+pe_test*/
+__pycache__/
+*.db
+skillcheck_results.jsonl
+suite.json
