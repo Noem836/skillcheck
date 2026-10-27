@@ -44,23 +44,42 @@ def frontmatter(text):
     """Return (fields, error). fields: top-level `key: value` pairs; YAML-validated when PyYAML exists."""
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
-        return {}, "SKILL.md에 프런트매터(---)가 없다"
+        return {}, "SKILL.md has no frontmatter (---)"
     try:
         end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
     except StopIteration:
-        return {}, "프런트매터가 닫히지 않았다"
+        return {}, "frontmatter is not closed with ---"
     block = "\n".join(lines[1:end])
     try:
         import yaml
         data = yaml.safe_load(block)
         if not isinstance(data, dict):
-            return {}, "프런트매터가 키-값 형태가 아니다"
+            return {}, "frontmatter is not key: value pairs"
         return {k: v for k, v in data.items()}, None
     except ImportError:
-        return dict(re.findall(r"^([\w-]+):\s*(.*)$", block, re.M)), None
+        return plain_fields(block), None
     except Exception as exc:  # yaml.YAMLError — e.g. an unquoted ': ' inside description
-        return {}, f"프런트매터 YAML 오류: {str(exc).splitlines()[0]}"
+        return {}, f"frontmatter YAML error: {str(exc).splitlines()[0]}"
 
+
+def plain_fields(block):
+    """Top-level fields without PyYAML: handles block scalars (|, >) and indented continuation lines."""
+    fields, more, key = {}, {}, None
+    for line in block.splitlines():
+        m = re.match(r"^([\w-]+):\s*(.*)$", line)
+        if m:
+            key = m.group(1)
+            fields[key], more[key] = m.group(2).strip(), []
+        elif key and line[:1] in (" ", "\t"):
+            more[key].append(line.strip())
+    for k, v in fields.items():
+        if v[:1] in ("|", ">") and v.rstrip("-+") in ("|", ">"):
+            fields[k] = ("\n" if v[0] == "|" else " ").join(more[k]).strip()
+        elif more[k]:
+            fields[k] = " ".join([v] + more[k]).strip()
+        if len(fields[k]) > 1 and fields[k][0] == fields[k][-1] and fields[k][0] in "\"'":
+            fields[k] = fields[k][1:-1]
+    return fields
 
 def overrides(project):
     """skillOverrides from user, project and local Claude settings (later wins)."""
@@ -118,26 +137,26 @@ def check(sk):
     if sk["error"]:
         return [("error", sk["error"])]
     if not meta.get("name"):
-        out.append(("warn", "name 이 없다(폴더 이름으로 대신 잡힌다)"))
+        out.append(("warn", "no name (the folder name is used instead)"))
     elif name != Path(sk["dir"]).name:
-        out.append(("warn", f"name '{name}' 과 폴더 이름 '{Path(sk['dir']).name}' 이 다르다"))
+        out.append(("warn", f"name '{name}' differs from folder name '{Path(sk['dir']).name}'"))
     if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name):
-        out.append(("info", "Agent Skills 규격(agentskills.io)의 이름은 소문자·숫자·하이픈이다. 다른 에이전트로 옮길 때 문제될 수 있다"))
+        out.append(("info", "Agent Skills spec (agentskills.io) names are lowercase letters, digits and hyphens; other agents may reject this name"))
     if not desc:
-        out.append(("error", "description 이 없다 — 자동 발동의 유일한 근거다"))
+        out.append(("error", "no description: it is the only thing automatic triggering is based on"))
     elif len(desc) > MAX_DESC:
-        out.append(("error", f"description 이 {len(desc)}자로 {MAX_DESC}자 상한을 넘는다"))
+        out.append(("error", f"description is {len(desc)} chars, over the {MAX_DESC} limit"))
     elif len(desc) < MIN_DESC:
-        out.append(("warn", f"description 이 {len(desc)}자로 짧다 — 언제 쓰는지가 드러나지 않으면 발동이 약하다"))
+        out.append(("warn", f"description is short ({len(desc)} chars): without when-to-use wording it rarely wins a request"))
     if SLASH_ONLY.search(desc):
-        out.append(("warn", "설명이 «/이름 형태로 쓴다»처럼 슬래시 전용으로 읽힌다 — 자동 발동이 안 될 수 있다 "
-                            "(실측 예: EASY 0/4 → 문구 수정 후 4/4)"))
+        out.append(("warn", "description reads as slash-command only (\"use as /name\"), which can stop automatic triggering "
+                            "(measured: 0/4 before, 4/4 after removing that wording)"))
     if str(meta.get("disable-model-invocation")).lower() == "true":
-        out.append(("info", "disable-model-invocation: true — 자동 발동하지 않는다(의도한 것이면 무시)"))
+        out.append(("info", "disable-model-invocation: true, never triggers automatically (ignore if intended)"))
     if sk["override"] not in (None, "on"):
-        out.append(("info", f"settings.json skillOverrides 가 '{sk['override']}' — 이 스킬은 꺼져 있다"))
+        out.append(("info", f"settings.json skillOverrides is '{sk['override']}': this skill is turned off"))
     if sk["nested"]:
-        out.append(("warn", f"하위 폴더에 SKILL.md 가 또 있다({', '.join(sk['nested'][:3])}) — Codex는 따로 등록해 목록이 지저분해진다"))
+        out.append(("warn", f"nested SKILL.md in subfolders ({', '.join(sk['nested'][:3])}): Codex registers each one as a separate skill"))
     return out
 
 
@@ -146,14 +165,14 @@ def scan(args):
     dup = Counter((s["agent"], s["name"]) for s in skills)
     report = []
     for s in skills:
-        issues = check(s) + ([("warn", "같은 에이전트에 같은 이름의 스킬이 또 있다")] if dup[(s["agent"], s["name"])] > 1 else [])
+        issues = check(s) + ([("warn", "another skill with the same name exists for this agent")] if dup[(s["agent"], s["name"])] > 1 else [])
         report.append({"agent": s["agent"], "name": s["name"], "dir": s["dir"], "issues": issues})
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=1))
         return
     for agent in ROOTS:
         mine = [r for r in report if r["agent"] == agent]
-        print(f"== {agent}: 스킬 {len(mine)}개")
+        print(f"== {agent}: {len(mine)} skills")
         for r in mine:
             mark = "OK " if not r["issues"] else ("ERR" if any(l == "error" for l, _ in r["issues"]) else "!  ")
             print(f"  {mark} {r['name']:28} {r['dir']}")
@@ -173,7 +192,7 @@ def gen(args):
     if args.skills:
         skills = [s for s in skills if s["name"] in args.skills.split(",")]
     listing = "\n".join(f"- {s['name']}: {s['description']}" for s in enabled("claude", Path(args.project)))
-    suite = {"note": "skillcheck gen — 모델이 설명을 보고 쓴 요청이라 설명 문구 쪽으로 치우칠 수 있다. 실제 사용 요청으로 바꿀수록 좋다.",
+    suite = {"note": "skillcheck gen: prompts were written by a model from the descriptions, so they lean toward the description wording. Replace them with real requests where you can.",
              "skills": {}}
     for s in skills:
         prompt = (f"An AI coding agent has these skills (name: description):\n{listing}\n\n"
@@ -193,7 +212,7 @@ def gen(args):
         suite["skills"][s["name"]] = {"pos": cases.get("pos", [])[:3], "neg": cases.get("neg", [])[:3]}
         print(f"{s['name']}: pos {len(suite['skills'][s['name']]['pos'])} / neg {len(suite['skills'][s['name']]['neg'])}", flush=True)
     Path(args.out).write_text(json.dumps(suite, ensure_ascii=False, indent=1), encoding="utf-8")
-    print(f"→ {args.out}  (요청을 읽고 고친 뒤 run 하세요)")
+    print(f"→ {args.out}  (read and edit the prompts, then run)")
 
 
 def SANDBOX_dir():
@@ -322,7 +341,7 @@ def pct(a, n):
 def report(args):
     rows = [r for r in read_rows(args.results) if r["tag"] == args.tag and (not args.agent or r["agent"] == args.agent)]
     for agent in sorted({r["agent"] for r in rows}):
-        print(f"== {agent} [{args.tag}]  {'skill':26} {'발동(해야 할 때)':16} {'오발동':12} 가져간 스킬 / 음성→다른 스킬 / 흔들림")
+        print(f"== {agent} [{args.tag}]  {'skill':26} {'fires':16} {'false fires':12} taken by / near-miss → other / flaky")
         for skill, s in sorted(stats([r for r in rows if r["agent"] == agent]).items()):
             print(f"   {skill:34} {pct(s['pos_fire'], s['pos_n']):16} {pct(s['neg_fire'], s['neg_n']):12} "
                   f"{dict(s['stolen']) or '-'} / {dict(s['neg_to']) or '-'} / {sorted(s['flaky']) or '-'}")
@@ -337,7 +356,7 @@ def compare(args):
         for skill in sorted(set(a) | set(b)):
             x, y = b.get(skill), a.get(skill)
             f = lambda s, k: pct(s[k + "_fire"], s[k + "_n"]) if s else "-"
-            print(f"   {skill:28} 발동 {f(x, 'pos'):12} → {f(y, 'pos'):12}  오발동 {f(x, 'neg'):10} → {f(y, 'neg')}")
+            print(f"   {skill:28} fires {f(x, 'pos'):12} → {f(y, 'pos'):12}  false {f(x, 'neg'):10} → {f(y, 'neg')}")
 
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -434,9 +453,11 @@ def selftest():
         skills = {s["dir"].split("/")[-1]: s for s in discover(root, {"claude": [root / "skills"]}, home=root)}
         msgs = {k: " ".join(m for _, m in check(v)) for k, v in skills.items()}
         assert msgs["good-one"] == "", msgs["good-one"]
-        assert "슬래시 전용" in msgs["EASY"] and "소문자" in msgs["EASY"]
-        assert "폴더 이름" in msgs["mismatch"] and "짧다" in msgs["mismatch"] and "하위 폴더" in msgs["mismatch"]
-        assert "프런트매터" in msgs["nofm"]
+        assert "slash-command only" in msgs["EASY"] and "lowercase" in msgs["EASY"]
+        assert "folder name" in msgs["mismatch"] and "short" in msgs["mismatch"] and "nested" in msgs["mismatch"]
+        assert "frontmatter" in msgs["nofm"]
+        f = plain_fields('name: x\ndescription: |-\n  line one\n  line two\nlicense: MIT\nother: >\n  a\n  b\nq: "quoted"')
+        assert f == {"name": "x", "description": "line one\nline two", "license": "MIT", "other": "a b", "q": "quoted"}, f
         try:
             import yaml  # noqa: F401
             assert "YAML" in msgs["badyaml"], msgs["badyaml"]

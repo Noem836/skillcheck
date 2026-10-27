@@ -114,6 +114,35 @@ def main():
                                           headers={"Authorization": "Bearer " + up["delete_token"]})[0] == 200)
     check("deleted report gone", req(base, "GET", up["url"])[0] == 404)
     check("other methods refused", req(base, "PUT", "/api/reports", [ROW])[0] in (404, 405, 501))
+
+    # --- AI-facing pages and remote MCP ---
+    for path in ("/llms.txt", "/robots.txt", "/sitemap.xml", "/guide/skill-not-triggering"):
+        code, h, body = req(base, "GET", path)
+        check(f"GET {path} 200 + CSP", code == 200 and "default-src 'none'" in h.get("Content-Security-Policy", "")
+              and "{site}" not in body and "{demo}" not in body)
+    check("report JSON for agents", req(base, "GET", "/r/" + "B" * 22 + ".json")[0] == 404)
+
+    def rpc(msg, raw_body=None):
+        return req(base, "POST", "/mcp", raw_body if raw_body is not None else msg)
+
+    def tool(url):
+        code, _, body = rpc({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                             "params": {"name": "check_skill_repo", "arguments": {"github_url": url}}})
+        return code, (json.loads(body).get("result") or {}) if code == 200 else {}
+
+    code, _, body = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
+    check("MCP initialize", code == 200 and json.loads(body)["result"]["serverInfo"]["name"] == "skillcheck")
+    check("MCP notification → 202", rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})[0] == 202)
+    check("MCP batch refused", rpc(None, b'[{"jsonrpc":"2.0","id":1,"method":"ping"}]')[0] == 400)
+    check("MCP big body → 413", rpc(None, b'{"a":"' + b"x" * 20000 + b'"}')[0] == 413)
+    check("MCP unknown method", "-32601" in rpc({"jsonrpc": "2.0", "id": 2, "method": "resources/list"})[2])
+    check("MCP bad args", "-32602" in rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                           "params": {"name": "check_skill_repo", "arguments": {"github_url": 5}}})[2])
+    for bad in ("http://169.254.169.254/latest/meta-data", "https://github.com.evil.example/a/b", "https://github.com/../x",
+                "https://github.com/a/..", "https://github.com/a/b/../../c", "https://github.com/a/b?x=1",
+                "file:///etc/passwd", "https://raw.githubusercontent.com/a/b/HEAD/x", "https://user@github.com/a/b"):
+        code, res = tool(bad)
+        check(f"SSRF refused: {bad[:40]}", code == 200 and res.get("isError") is True and "must look like" in res["content"][0]["text"])
     for m in ("HEAD", "PUT", "OPTIONS"):
         check(f"{m} error page has CSP", "default-src 'none'" in (req(base, m, "/r/x")[1].get("Content-Security-Policy") or ""))
     for junk in (b"GARBAGE\r\n\r\n", b"GET / HTTP/9.9\r\n\r\n"):
@@ -145,6 +174,26 @@ def main():
     codes = [req(base, "POST", "/api/reports", [ROW], {"Fly-Client-IP": f"10.9.{i}.1", "X-Forwarded-For": f"10.8.{i}.1"})[0]
              for i in range(server.UPLOADS_PER_HOUR + 1)]
     check("rate limit → 429", 429 in codes)
+    mcodes = [rpc({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": "check_skill_repo",
+                  "arguments": {"github_url": "x"}}})[0] for i in range(server.MCP_PER_HOUR + 1)]
+    check("MCP tool rate limit → 429", 429 in mcodes)
+    if httpd:  # unit: the fetcher never follows a redirect (would let a repo host bounce us anywhere)
+        import http.server
+        class Bounce(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", "http://169.254.169.254/")
+                self.end_headers()
+            def log_message(self, *a):
+                pass
+        b = http.server.HTTPServer(("127.0.0.1", 0), Bounce)
+        threading.Thread(target=b.handle_request, daemon=True).start()
+        try:
+            server.fetch(f"http://127.0.0.1:{b.server_port}/")
+            followed = True
+        except urllib.error.HTTPError as e:
+            followed = e.code != 302
+        check("MCP fetch does not follow redirects", not followed)
 
     if httpd:  # needs server internals: only against the throwaway local server
         httpd.shutdown()

@@ -37,6 +37,16 @@ python3 skillcheck.py html --tag before,after       # one-file HTML report
 python3 skillcheck.py upload --tag before,after     # optional share link
 ```
 
+## For AI agents (remote MCP, no install)
+
+A hosted, read-only MCP server runs the static checks on any public GitHub repo, which is useful before installing or publishing a skill pack:
+
+```bash
+claude mcp add --transport http skillcheck https://skillcheck-d1d57e.fly.dev/mcp
+```
+
+Tool: `check_skill_repo(github_url)` returns the frontmatter/YAML errors, name mismatches, weak or slash-only descriptions, nested `SKILL.md` files, duplicate names, and pairs of skills whose descriptions overlap enough to compete. Real trigger measurement still needs the CLI, because it runs in *your* setup.
+
 ## What it checks
 
 - **Discovery**: Claude Code (`~/.claude/skills`, `.claude/skills`, enabled plugins, `skillOverrides`) and Codex (`~/.agents/skills`, `~/.codex/skills`, `.agents/skills`)
@@ -54,6 +64,26 @@ Runs use your own CLI login and subscription. Nothing is sent anywhere unless yo
 ## Report server
 
 `server.py` is the share-link server (stdlib + sqlite). `check_web.py [url]` attacks a running instance (XSS, oversized/deep JSON, slow clients, id guessing, rate-limit spoofing). Deploy with the included `Dockerfile` / `fly.toml`.
+
+## FAQ
+
+**Why isn't my Claude Code skill triggering?**
+Usually another installed skill wins the request, or the description reads as slash-command only ("use as /name"). Run `scan`, then `run` + `report` and look at the *taken by* column. See the [guide](https://skillcheck-d1d57e.fly.dev/guide/skill-not-triggering).
+
+**My skill passes `claude plugin eval` but doesn't fire in my normal setup. Why?**
+The official eval loads the skill in a clean environment. skillcheck measures it next to everything you actually have installed.
+
+**Which of my skills is stealing requests from another?**
+`report` lists, per skill, which other skill loaded on its should-fire prompts.
+
+**Does it work with Codex CLI?**
+Yes: `run --agent codex`. Skill activation is read from the `SKILL.md` read in `codex exec --json` events.
+
+**How do I test SKILL.md descriptions before publishing to a marketplace?**
+`gen` drafts should-fire and near-miss prompts, `run` measures, you edit, then `compare` shows before/after. The remote MCP gives a quick static check of the whole repo.
+
+**Does it send my prompts or code anywhere?**
+No. Runs use your own CLI login locally. `upload` is opt-in and sends skill names and hit/miss rows only.
 
 ## Limits
 

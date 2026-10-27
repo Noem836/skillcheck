@@ -8,3 +8,4 @@ __pycache__/
 skillcheck_results.jsonl
 suite.json
 !skills/*/SKILL.md
+!AGENTS.md
