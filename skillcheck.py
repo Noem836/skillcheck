@@ -254,8 +254,10 @@ def preflight(args):
     if not suspects:
         return print("no likely rivals by wording; name the skills to measure with --skills a,b")
     box = Path(tempfile.mkdtemp(prefix="skillcheck_preflight_"))
+    sub = ".claude/skills" if agent == "claude" else ".agents/skills"
+    (box / "without" / sub).mkdir(parents=True)  # same folder shape both ways: the new skill is the only difference
     for n in new:  # project-level install inside a throwaway folder; your real skill folders are untouched
-        shutil.copytree(n["dir"], box / (".claude/skills" if agent == "claude" else ".agents/skills") / Path(n["dir"]).name)
+        shutil.copytree(n["dir"], box / "with" / sub / Path(n["dir"]).name)
     suite = box / "suite.json"
     gen(argparse.Namespace(project=args.project, skills=",".join(suspects), model="sonnet", out=str(suite)))
     data = json.loads(suite.read_text())
@@ -263,9 +265,9 @@ def preflight(args):
         g["neg"] = []  # only "should fire" requests of your existing skills matter here
     suite.write_text(json.dumps(data, ensure_ascii=False))
     results = box / "results.jsonl"
-    for tag, cwd in (("without", None), ("with", box)):
+    for tag in ("without", "with"):
         print(f"-- runs {tag} the new skill")
-        run(argparse.Namespace(results=str(results), tag=tag, cwd=cwd and str(cwd), suite=str(suite),
+        run(argparse.Namespace(results=str(results), tag=tag, cwd=str(box / tag), suite=str(suite),
                                runs=args.runs, agent=agent, model=args.model))
     rows = read_rows(results)
     before, after = stats([r for r in rows if r["tag"] == "without"]), stats([r for r in rows if r["tag"] == "with"])
@@ -275,9 +277,11 @@ def preflight(args):
         b, a = before.get(k), after.get(k)
         if not b or not a:
             continue
-        took = sum(v for s, v in a["stolen"].items() if s in names)
+        lost = Counter(r["picked"] for r in rows if r["tag"] == "with" and r["skill"] == k and r["picked"] != k)
+        went = ", ".join(f"{'NEW ' if p in names else ''}{p} {c}" for p, c in lost.most_common())
         print(f"  {k:28} fires {pct(b['pos_fire'], b['pos_n'])} -> {pct(a['pos_fire'], a['pos_n'])}"
-              + (f"   taken by the new skill: {took}" if took else ""))
+              + (f"   misses went to: {went}" if went else ""))
+    print("('none' = no skill fired: the new skill didn't take the request but still pulled it away from yours)")
     print(f"(raw rows: {results})")
 
 
