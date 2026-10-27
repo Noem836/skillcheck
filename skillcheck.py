@@ -277,11 +277,12 @@ def preflight(args):
         b, a = before.get(k), after.get(k)
         if not b or not a:
             continue
-        lost = Counter(r["picked"] for r in rows if r["tag"] == "with" and r["skill"] == k and r["picked"] != k)
-        went = ", ".join(f"{'NEW ' if p in names else ''}{p} {c}" for p, c in lost.most_common())
+        went = {t: ", ".join(f"{'NEW ' if p in names else ''}{p} {c}" for p, c in Counter(
+            r["picked"] for r in rows if r["tag"] == t and r["skill"] == k and r["picked"] != k).most_common()) or "-"
+            for t in ("without", "with")}
         print(f"  {k:28} fires {pct(b['pos_fire'], b['pos_n'])} -> {pct(a['pos_fire'], a['pos_n'])}"
-              + (f"   misses went to: {went}" if went else ""))
-    print("('none' = no skill fired: the new skill didn't take the request but still pulled it away from yours)")
+              f"   misses without: {went['without']} | with: {went['with']}")
+    print("(NEW = taken by the new skill; none = no skill fired)")
     print(f"(raw rows: {results})")
 
 
