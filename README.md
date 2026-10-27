@@ -1,6 +1,8 @@
 # skillcheck
 
-**Your skill passed eval. Does it fire in *your* setup?**
+**Find out which of your skills is stealing the request.**
+
+Your skill passed eval. Does it fire in *your* setup, next to everything else you installed?
 
 Official skill evals load one skill in a clean environment. In real use it sits next to dozens of other skills and plugins, and one of them quietly takes the request. In the author's setup, prompts that fired 21/21 in an isolated `claude plugin eval` missed 5 times in the real harness.
 
