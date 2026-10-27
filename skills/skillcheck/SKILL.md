@@ -1,6 +1,6 @@
 ---
 name: skillcheck
-description: Measure whether the user's Claude Code or Codex skills actually trigger in their real setup, next to all their other installed skills and plugins. Use when the user says a skill "doesn't fire", "isn't being used", "gets ignored", "the wrong skill runs", asks to test, audit or debug skill triggering or descriptions, or wants to check a skill before publishing it. Not for writing a new skill from scratch or for general code review.
+description: Measure whether the user's Claude Code or Codex skills actually trigger in their real setup, next to all their other installed skills and plugins. Use when the user says a skill "doesn't fire", "isn't being used", "gets ignored", "the wrong skill runs", asks to test, audit or debug skill triggering or descriptions, wants to check a skill before publishing it, or is about to install a new skill and wants to know whether it will break or take over existing ones. Not for writing a new skill from scratch or for general code review.
 ---
 
 # skillcheck
@@ -23,6 +23,10 @@ Run it with `python3`. It needs only the standard library.
 4. `python3 skillcheck.py report --tag before`. Read the "taken by" column: a miss is usually another skill winning, not a broken skill.
 5. Edit the description (see below), run again with `--tag after`, then `compare --before before --after after`.
 6. Optional: `html --tag before,after` for a local report, or `upload --tag before,after` for a share link (sends no prompt texts).
+
+## Before installing a skill
+
+`python3 skillcheck.py preflight <path to the downloaded skill or pack>` lists name clashes and the installed skills it most likely competes with. Add `--measure --runs 2` (and `--skills a,b` for the user's skills that matter most; word overlap misses narrow rivals) to run those skills' prompts with and without the new skill (installed only inside a temp folder). Report each skill's fire rate before → after, and "taken by the new skill". Tell the user the run estimate first (suspects × 3 prompts × runs × 2, about a minute each).
 
 ## Description fixes that worked in measurements
 

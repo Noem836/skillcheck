@@ -8,6 +8,14 @@ Official skill evals load one skill in a clean environment. In real use it sits 
 
 skillcheck runs your prompts through your real `claude` and `codex` CLIs with everything you have installed, and reports which skill fired, which one stole the request, how flaky each prompt is, and whether your description fix helped.
 
+**New: check a skill *before* you install it.** `preflight` tells you which of your installed skills a new one will take requests from, by running your existing skills' prompts with and without it in a throwaway folder. Your real skill folders are not touched. Word overlap only suggests suspects (a narrow skill can take requests with little shared wording), so name the skills you care about with `--skills`:
+
+```bash
+python3 skillcheck.py preflight path/to/new-skill            # instant: name clashes, likely rivals, listing size
+python3 skillcheck.py preflight path/to/new-skill --measure  # real runs: your skills' fire rate without → with it
+python3 skillcheck.py preflight path/to/new-skill --measure --skills my-a,my-b   # pick which of yours to measure
+```
+
 [Example report](https://skillcheck-d1d57e.fly.dev/r/S1FWWO2UHQKwhlM3eBCXtw): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
 
 ## Install
@@ -47,7 +55,10 @@ A hosted, read-only MCP server runs the static checks on any public GitHub repo,
 claude mcp add --transport http skillcheck https://skillcheck-d1d57e.fly.dev/mcp
 ```
 
-Tool: `check_skill_repo(github_url)` returns the frontmatter/YAML errors, name mismatches, weak or slash-only descriptions, nested `SKILL.md` files, duplicate names, and pairs of skills whose descriptions overlap enough to compete. Real trigger measurement still needs the CLI, because it runs in *your* setup.
+Tools:
+
+- `preflight_skill(github_url, installed)`: call it before installing a skill. Pass the skills the user already has (name and description, which an agent can read from its own skill listing). It returns the name clashes that would shadow an installed skill, which installed skills the new one is most likely to take requests from, and how much the skill listing grows.
+- `check_skill_repo(github_url)` returns the frontmatter/YAML errors, name mismatches, weak or slash-only descriptions, nested `SKILL.md` files, duplicate names, and pairs of skills whose descriptions overlap enough to compete. Real trigger measurement still needs the CLI, because it runs in *your* setup.
 
 ## What it checks
 

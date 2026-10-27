@@ -8,6 +8,7 @@
   compare --before before --after after
   html  --tag before,after --out report.html   one-file HTML report (results embedded)
   upload --tag before,after    share link for those results (prompt texts are not sent)
+  preflight PATH [--measure --agent claude|codex]   before installing a skill: which of yours will it take requests from?
   selftest
 Runs use your own CLI login (subscription); nothing leaves your machine except those CLI calls.
 """
@@ -15,6 +16,7 @@ Runs use your own CLI login (subscription); nothing leaves your machine except t
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -183,6 +185,100 @@ def scan(args):
 def enabled(agent, project):
     return [s for s in discover(project) if s["agent"] == agent and not s["error"]
             and s["override"] in (None, "on") and str(s["meta"].get("disable-model-invocation")).lower() != "true"]
+
+
+# ---------- preflight: will a new skill take requests from the ones you have? ----------
+
+STOP = {"when", "this", "that", "with", "user", "skill", "skills", "use", "asks", "wants", "from", "your", "into", "about"}
+LIST_BUDGET = 8000  # Claude Code skill listing: 1% of the context window, 8,000 chars when unknown (docs, 2026-10)
+
+
+def words(text):
+    text = text.lower()  # Korean: 2-char word heads stand in for stems (particles attach to words)
+    return {w for w in re.findall(r"[a-z]{4,}", text) if w not in STOP} | {w[:2] for w in re.findall(r"[가-힣]{2,}", text)}
+
+
+def overlap(a, b):
+    wa, wb = words(a), words(b)
+    return len(wa & wb) / len(wa | wb) if wa | wb else 0.0
+
+
+def preflight_static(new, installed):
+    """new / installed: [{name, description}]. Name clashes, likely rivals, listing size before/after."""
+    # ponytail: word-set Jaccard only ranks suspects; --measure is the real answer
+    have = {s["name"].split(":")[-1] for s in installed}
+    out = []
+    for n in new:
+        sus = sorted(((round(overlap(n["description"], s["description"]), 2), s["name"]) for s in installed), reverse=True)
+        out.append({"name": n["name"], "same_name": n["name"] in have,
+                    "suspects": [{"skill": k, "overlap": v} for v, k in sus[:3] if v >= 0.1]})
+    size = lambda ss: sum(len(s["name"]) + len(s["description"]) + 4 for s in ss)
+    return {"skills": out, "listing_chars": {"before": size(installed), "after": size(installed + new), "budget": LIST_BUDGET}}
+
+
+def load_new(path):
+    root = Path(path).expanduser().resolve()
+    root = root.parent if root.name == "SKILL.md" else root
+    new = []
+    for f in sorted(root.rglob("SKILL.md")):
+        meta, err = frontmatter(f.read_text(encoding="utf-8", errors="replace"))
+        new.append({"agent": "", "dir": str(f.parent), "name": str(meta.get("name") or f.parent.name),
+                    "description": str(meta.get("description") or ""), "meta": meta, "error": err,
+                    "override": None, "nested": []})
+    return new
+
+
+def preflight(args):
+    agent = args.agent or "claude"
+    new, installed = load_new(args.skill), enabled(agent, Path(args.project))
+    if not new:
+        sys.exit(f"no SKILL.md under {args.skill}")
+    res = preflight_static(new, installed)
+    print(f"== preflight: {len(new)} new skill(s) vs your {len(installed)} {agent} skills")
+    for n, r in zip(new, res["skills"]):
+        print(f"  {r['name']}")
+        for level, msg in check(n):
+            print(f"     [{level}] {msg}")
+        if r["same_name"]:
+            print("     [error] you already have a skill with this name; one of them will shadow the other")
+        for s in r["suspects"]:
+            print(f"     may compete with: {s['skill']} (description overlap {s['overlap']})")
+    lc = res["listing_chars"]
+    print(f"  skill listing: {lc['before']} -> {lc['after']} chars of the skills skillcheck can see (built-in skills add more; "
+          f"Claude drops descriptions past ~{lc['budget']} on a 200k context)")
+    suspects = args.skills.split(",") if args.skills else list(dict.fromkeys(s["skill"] for r in res["skills"] for s in r["suspects"]))
+    if not args.measure:
+        print("\nMeasure for real (generates prompts for the suspects, runs them with and without the new skill):\n"
+              f"  python3 skillcheck.py preflight {args.skill} --measure --agent {agent} --runs 2")
+        return
+    if not suspects:
+        return print("no likely rivals by wording; name the skills to measure with --skills a,b")
+    box = Path(tempfile.mkdtemp(prefix="skillcheck_preflight_"))
+    for n in new:  # project-level install inside a throwaway folder; your real skill folders are untouched
+        shutil.copytree(n["dir"], box / (".claude/skills" if agent == "claude" else ".agents/skills") / Path(n["dir"]).name)
+    suite = box / "suite.json"
+    gen(argparse.Namespace(project=args.project, skills=",".join(suspects), model="sonnet", out=str(suite)))
+    data = json.loads(suite.read_text())
+    for g in data["skills"].values():
+        g["neg"] = []  # only "should fire" requests of your existing skills matter here
+    suite.write_text(json.dumps(data, ensure_ascii=False))
+    results = box / "results.jsonl"
+    for tag, cwd in (("without", None), ("with", box)):
+        print(f"-- runs {tag} the new skill")
+        run(argparse.Namespace(results=str(results), tag=tag, cwd=cwd and str(cwd), suite=str(suite),
+                               runs=args.runs, agent=agent, model=args.model))
+    rows = read_rows(results)
+    before, after = stats([r for r in rows if r["tag"] == "without"]), stats([r for r in rows if r["tag"] == "with"])
+    names = {n["name"] for n in new}
+    print("\n== result: requests meant for your skills")
+    for k in suspects:
+        b, a = before.get(k), after.get(k)
+        if not b or not a:
+            continue
+        took = sum(v for s, v in a["stolen"].items() if s in names)
+        print(f"  {k:28} fires {pct(b['pos_fire'], b['pos_n'])} -> {pct(a['pos_fire'], a['pos_n'])}"
+              + (f"   taken by the new skill: {took}" if took else ""))
+    print(f"(raw rows: {results})")
 
 
 # ---------- prompt generation ----------
@@ -478,18 +574,26 @@ def selftest():
             {"skill": "a", "kind": "neg", "id": "a/neg0", "picked": "none"}, {"skill": "a", "kind": "neg", "id": "a/neg1", "picked": "c"}]
     s = stats(rows)["a"]
     assert (s["pos_fire"], s["pos_n"], s["neg_fire"], dict(s["stolen"]), dict(s["neg_to"]), s["flaky"]) == (1, 2, 0, {"b": 1}, {"c": 1}, {"a/pos0"})
+    r = preflight_static([{"name": "pdf-tables", "description": "Extract tables from PDF files into CSV spreadsheets"}],
+                         [{"name": "pdf-tables", "description": "x"},
+                          {"name": "csv-tools", "description": "Clean CSV spreadsheets and extract tables"},
+                          {"name": "easy", "description": "쉬운 말로 설명한다"}])
+    assert r["skills"][0]["same_name"] and [s["skill"] for s in r["skills"][0]["suspects"]] == ["csv-tools"], r
+    assert r["listing_chars"]["after"] > r["listing_chars"]["before"]
+    assert overlap("쉬운 말로 설명해 줘", "쉬운 설명한다") > 0.3
     print("selftest ok")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("cmd", choices=["scan", "gen", "run", "report", "compare", "html", "upload", "selftest"])
+    p.add_argument("cmd", choices=["scan", "gen", "run", "report", "compare", "html", "upload", "preflight", "selftest"])
+    p.add_argument("skill", nargs="?", help="preflight: path to the new skill (folder, SKILL.md, or a pack)")
     p.add_argument("--project", default=".", help="project root for .claude/.agents skills and settings")
     p.add_argument("--json", action="store_true")
     p.add_argument("--agent", choices=["claude", "codex"])
     p.add_argument("--suite", default="suite.json")
     p.add_argument("--out", default="suite.json")
-    p.add_argument("--skills", help="comma-separated subset for gen")
+    p.add_argument("--skills", help="comma-separated subset for gen; preflight: your skills to measure")
     p.add_argument("--model", default=None, help="model for run (default: your CLI default); gen defaults to sonnet")
     p.add_argument("--runs", type=int, default=3)
     p.add_argument("--tag", default="before")
@@ -497,6 +601,7 @@ def main():
     p.add_argument("--after", default="after")
     p.add_argument("--cwd", help="where the agent runs (default: an empty temp dir, so only user-level skills load)")
     p.add_argument("--results", default=str(RESULTS))
+    p.add_argument("--measure", action="store_true", help="preflight: real runs with and without the new skill")
     p.add_argument("--server", default=SITE, help="report server for upload")
     args = p.parse_args()
     if args.cmd == "html" and args.out == "suite.json":
@@ -505,7 +610,7 @@ def main():
         args.model = args.model or "sonnet"
     if args.cmd == "run" and not args.agent:
         p.error("run needs --agent claude|codex")
-    {"scan": scan, "gen": gen, "run": run, "report": report, "compare": compare, "html": html, "upload": upload}.get(args.cmd, lambda a: selftest())(args)
+    {"scan": scan, "gen": gen, "run": run, "report": report, "compare": compare, "html": html, "upload": upload, "preflight": preflight}.get(args.cmd, lambda a: selftest())(args)
 
 
 if __name__ == "__main__":

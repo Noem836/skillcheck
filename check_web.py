@@ -134,7 +134,7 @@ def main():
     check("MCP initialize", code == 200 and json.loads(body)["result"]["serverInfo"]["name"] == "skillcheck")
     check("MCP notification → 202", rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})[0] == 202)
     check("MCP batch refused", rpc(None, b'[{"jsonrpc":"2.0","id":1,"method":"ping"}]')[0] == 400)
-    check("MCP big body → 413", rpc(None, b'{"a":"' + b"x" * 20000 + b'"}')[0] == 413)
+    check("MCP big body → 413", rpc(None, b'{"a":"' + b"x" * 120000 + b'"}')[0] == 413)
     check("MCP unknown method", "-32601" in rpc({"jsonrpc": "2.0", "id": 2, "method": "resources/list"})[2])
     check("MCP bad args", "-32602" in rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                            "params": {"name": "check_skill_repo", "arguments": {"github_url": 5}}})[2])
@@ -143,6 +143,15 @@ def main():
                 "file:///etc/passwd", "https://raw.githubusercontent.com/a/b/HEAD/x", "https://user@github.com/a/b"):
         code, res = tool(bad)
         check(f"SSRF refused: {bad[:40]}", code == 200 and res.get("isError") is True and "must look like" in res["content"][0]["text"])
+    code, _, body = rpc({"jsonrpc": "2.0", "id": 4, "method": "tools/list"})
+    check("MCP lists preflight_skill", code == 200 and "preflight_skill" in body)
+    pf = lambda inst, url="https://github.com/a/b": rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+        "name": "preflight_skill", "arguments": {"github_url": url, "installed": inst}}})
+    for label, inst in (("not a list", "x"), ("81 items", [{"name": "a", "description": "b"}] * 81),
+                        ("long description", [{"name": "a", "description": "x" * 1101}]), ("missing name", [{"description": "b"}])):
+        check(f"preflight bad installed ({label}) → -32602", "-32602" in pf(inst)[2])
+    code, _, body = pf([], "http://169.254.169.254/latest/meta-data")
+    check("preflight SSRF refused", code == 200 and "must look like" in body)
     for m in ("HEAD", "PUT", "OPTIONS"):
         check(f"{m} error page has CSP", "default-src 'none'" in (req(base, m, "/r/x")[1].get("Content-Security-Policy") or ""))
     for junk in (b"GARBAGE\r\n\r\n", b"GET / HTTP/9.9\r\n\r\n"):
