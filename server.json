@@ -8,11 +8,11 @@
     "url": "https://github.com/Noem836/skillcheck",
     "source": "github"
   },
-  "websiteUrl": "https://skillcheck-d1d57e.fly.dev",
+  "websiteUrl": "https://skillcheck.vercel.app",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://skillcheck-d1d57e.fly.dev/mcp"
+      "url": "https://skillcheck.vercel.app/mcp"
     }
   ]
 }

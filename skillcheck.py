@@ -30,7 +30,7 @@ ROOTS = {  # agent -> skill folders it reads (user level, then project level rel
 }
 SANDBOX = Path(tempfile.gettempdir()) / "skillcheck_sandbox"
 RESULTS = Path("skillcheck_results.jsonl")
-SITE = "https://skillcheck-d1d57e.fly.dev"
+SITE = "https://skillcheck.vercel.app"
 # Prompts may come from someone else's suite, so runs get no way to act or send data out (tested 2026-10-22:
 # with a blocklist, Claude read a file and called PushNotification/Artifact; Codex sent it via MCP search).
 CLAUDE_TOOLS = ["--tools", "Skill"]

@@ -3,7 +3,7 @@
   "description": "Measure whether your Claude Code / Codex skills actually fire in your real setup, which skill steals the request, and whether a description fix helped.",
   "version": "0.1.0",
   "author": {"name": "Noem836"},
-  "homepage": "https://skillcheck-d1d57e.fly.dev",
+  "homepage": "https://skillcheck.vercel.app",
   "repository": "https://github.com/Noem836/skillcheck",
   "license": "MIT",
   "keywords": ["skills", "testing", "triggering", "codex", "eval"]
