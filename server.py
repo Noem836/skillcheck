@@ -315,7 +315,7 @@ def mcp(msg):
     if method == "initialize":
         v = params.get("protocolVersion") if isinstance(params, dict) else None
         return ok({"protocolVersion": v if v in MCP_VERSIONS else MCP_VERSIONS[0], "capabilities": {"tools": {}},
-                   "serverInfo": {"name": "skillcheck", "version": "0.1.1"},
+                   "serverInfo": {"name": "skillcheck", "version": "0.1.2"},
                    "instructions": "Use preflight_skill before installing a skill; check_skill_repo before publishing one."})
     if method == "ping":
         return ok({})
