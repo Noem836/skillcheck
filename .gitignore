@@ -10,3 +10,5 @@ suite.json
 !skills/*/SKILL.md
 !AGENTS.md
 .claude/
+.vercel
+.env*

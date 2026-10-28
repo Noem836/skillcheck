@@ -23,6 +23,17 @@ from pathlib import Path
 import server
 
 ROW = {"tag": "t", "agent": "claude", "run": 0, "id": "a/pos0", "skill": "a", "kind": "pos", "picked": "a"}
+CREATED_REPORTS = []
+
+
+def remember_report(base, method, path, headers, result):
+    code, _, body = result
+    if method == "POST" and path == "/api/reports" and code == 201:
+        report = json.loads(body)
+        CREATED_REPORTS.append((base, report["url"], report["delete_token"]))
+    if method == "DELETE" and code == 200:
+        auth = (headers or {}).get("Authorization")
+        CREATED_REPORTS[:] = [r for r in CREATED_REPORTS if not (r[0] == base and r[1][3:] == path.removeprefix("/api/reports/") and auth == "Bearer " + r[2])]
 
 
 def req(base, method, path, body=None, headers=None):
@@ -31,9 +42,11 @@ def req(base, method, path, body=None, headers=None):
     r = urllib.request.Request(base + path, data=data, method=method, headers=h)
     try:
         with urllib.request.urlopen(r, timeout=15) as resp:
-            return resp.status, resp.headers, resp.read().decode()  # case-insensitive (HTTP/2 lowercases)
+            result = resp.status, resp.headers, resp.read().decode()  # case-insensitive (HTTP/2 lowercases)
     except urllib.error.HTTPError as e:
-        return e.code, e.headers, e.read().decode()
+        result = e.code, e.headers, e.read().decode()
+    remember_report(base, method, path, headers, result)
+    return result
 
 
 T = {}  # host, port, tls of the target
@@ -44,9 +57,9 @@ def conn(timeout):
     return ssl.create_default_context().wrap_socket(s, server_hostname=T["host"]) if T["tls"] else s
 
 
-def raw(data, wait=0.0):
+def raw(data, wait=0.0, timeout=20):
     data = data.replace(b"Host: x", b"Host: " + T["host"].encode())
-    s = conn(20)
+    s = conn(timeout)
     s.sendall(data)
     time.sleep(wait)
     try:
@@ -55,6 +68,20 @@ def raw(data, wait=0.0):
         return ""
     finally:
         s.close()
+
+
+def status_code(response):
+    match = re.match(r"HTTP/\d(?:\.\d)? (\d{3})", response, re.I)
+    return int(match[1]) if match else None
+
+
+def report_gone(base, url):
+    for attempt in range(13):
+        if req(base, "GET", url)[0] == 404:
+            return True
+        if attempt < 12:
+            time.sleep(5)  # public Blob CDN caches deleted reports for up to a minute
+    return False
 
 
 def check_blob_fake():
@@ -216,21 +243,28 @@ def main():
     check("bool as run → 400", req(base, "POST", "/api/reports", [{**ROW, "run": True}])[0] == 400)
     check("unknown kind → 400", req(base, "POST", "/api/reports", [{**ROW, "kind": "x"}])[0] == 400)
     check("too many rows → 400", req(base, "POST", "/api/reports", [ROW] * 5001)[0] == 400)
-    check("huge Content-Length → 413",
-          "413" in raw(b"POST /api/reports HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
-                             b"Content-Length: 999999999\r\n\r\n").split("\r\n")[0])
+    huge = raw(b"POST /api/reports HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+               b"Content-Length: 999999999\r\n\r\n", timeout=3 if not httpd else 20)
+    huge_ok = "413" in huge.split("\r\n")[0] if httpd else status_code(huge) in (400, 413) or not huge
+    check("huge Content-Length → 413" if httpd else "huge Content-Length → held/rejected by Vercel edge", huge_ok)
     check("no Content-Length → 411",
           "411" in raw(b"POST /api/reports HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\r\n").split("\r\n")[0])
 
     # id handling
     for p in ["/r/../../etc/passwd", "/r/' OR 1=1--", "/r/" + "A" * 22, "/r/%2e%2e%2fr.db", "/r/", "/r.db", "/../r.db"]:
-        check(f"GET {p!r} → 404", req(base, "GET", urllib.request.quote(p, safe="/%'=")) [0] == 404)
+        if not httpd and p in ("/r/../../etc/passwd", "/../r.db"):
+            response = raw(f"GET {p} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".encode(), timeout=5)
+            ok, label = status_code(response) in (400, 404), f"Vercel edge rejects {p!r}"
+        else:
+            ok = req(base, "GET", urllib.request.quote(p, safe="/%'="))[0] == 404
+            label = f"GET {p!r} → 404"
+        check(label, ok)
     rid = up["url"][3:]
     check("DELETE no token → 404", req(base, "DELETE", "/api/reports/" + rid)[0] == 404)
     check("DELETE wrong token → 404", req(base, "DELETE", "/api/reports/" + rid, headers={"Authorization": "Bearer x"})[0] == 404)
     check("DELETE right token → 200", req(base, "DELETE", "/api/reports/" + rid,
                                           headers={"Authorization": "Bearer " + up["delete_token"]})[0] == 200)
-    check("deleted report gone", req(base, "GET", up["url"])[0] == 404)
+    check("deleted report gone", report_gone(base, up["url"]))
     check("other methods refused", req(base, "PUT", "/api/reports", [ROW])[0] in (404, 405, 501))
 
     # --- AI-facing pages and remote MCP ---
@@ -252,7 +286,10 @@ def main():
     check("MCP initialize", code == 200 and json.loads(body)["result"]["serverInfo"]["name"] == "skillcheck")
     check("MCP notification → 202", rpc({"jsonrpc": "2.0", "method": "notifications/initialized"})[0] == 202)
     check("MCP batch refused", rpc(None, b'[{"jsonrpc":"2.0","id":1,"method":"ping"}]')[0] == 400)
-    check("MCP big body → 413", rpc(None, b'{"a":"' + b"x" * 120000 + b'"}')[0] == 413)
+    large_mcp = raw(b"POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                    b"Content-Length: 120000\r\n\r\n", timeout=3 if not httpd else 20)
+    mcp_size_ok = status_code(large_mcp) == 413 if httpd else status_code(large_mcp) in (400, 413) or not large_mcp
+    check("MCP big body → 413" if httpd else "MCP big body → held/rejected by Vercel edge", mcp_size_ok)
     check("MCP unknown method", "-32601" in rpc({"jsonrpc": "2.0", "id": 2, "method": "resources/list"})[2])
     check("MCP bad args", "-32602" in rpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
                                            "params": {"name": "check_skill_repo", "arguments": {"github_url": 5}}})[2])
@@ -273,9 +310,13 @@ def main():
     for m in ("HEAD", "PUT", "OPTIONS"):
         check(f"{m} error page has CSP", "default-src 'none'" in (req(base, m, "/r/x")[1].get("Content-Security-Policy") or ""))
     for junk in (b"GARBAGE\r\n\r\n", b"GET / HTTP/9.9\r\n\r\n"):
-        r = raw(junk).lower()  # behind Fly the proxy rejects these itself with an empty 400: nothing to render
-        check(f"malformed {junk[:14]!r} → CSP or empty 400", "content-security-policy: default-src 'none'" in r
-              or (r.startswith("http/1.1 400") and "content-length: 0" in r))
+        r = raw(junk).lower()  # the edge rejects malformed requests before the function sees them
+        if httpd:
+            ok = "content-security-policy: default-src 'none'" in r or (r.startswith("http/1.1 400") and "content-length: 0" in r)
+            label = f"malformed {junk[:14]!r} → CSP or empty 400"
+        else:
+            ok, label = status_code(r) in (400, 505), f"malformed {junk[:14]!r} → Vercel edge rejection"
+        check(label, ok)
 
     # slow / lying clients must not block others
     slow = threading.Thread(target=raw, args=(b"POST /api/reports HTTP/1.1\r\nHost: x\r\n", 12))
@@ -286,15 +327,16 @@ def main():
     t0 = time.time()
     check("server answers while slow clients hang", req(base, "GET", "/r/" + "B" * 22)[0] == 404 and time.time() - t0 < 3)
     slow.join(), lying.join()
-    s = conn(30)
-    s.sendall(b"GET /r/")  # never finish the request line
-    t0 = time.time()
-    try:
-        closed = s.recv(10) == b""
-    except (socket.timeout, ConnectionResetError):
-        closed = False
-    s.close()
-    check(f"slow connection cut by server ({time.time() - t0:.0f}s)", closed and time.time() - t0 < 15)
+    if httpd:  # Vercel's edge owns client socket timeouts on deployed functions
+        s = conn(30)
+        s.sendall(b"GET /r/")  # never finish the request line
+        t0 = time.time()
+        try:
+            closed = s.recv(10) == b""
+        except (socket.timeout, ConnectionResetError):
+            closed = False
+        s.close()
+        check(f"slow connection cut by server ({time.time() - t0:.0f}s)", closed and time.time() - t0 < 15)
 
     # rate limit last (it uses up this IP's quota)
     # each upload claims a new client IP; a server that trusts it would never return 429
@@ -349,6 +391,11 @@ def main():
         import sqlite3
         whos = [w for (w,) in sqlite3.connect(db).execute("SELECT who FROM uploads")]
         check("db holds no raw IP", whos and not any("127.0.0.1" in w for w in whos))
+    elif CREATED_REPORTS:
+        created = list(CREATED_REPORTS)
+        removed = [req(base, "DELETE", "/api/reports/" + url[3:], headers={"Authorization": "Bearer " + token})[0] == 200
+                   for _, url, token in created]
+        check(f"temporary reports deleted ({sum(removed)}/{len(created)})", all(removed))
     print(f"{sum(results)}/{len(results)} held")
     return 0 if all(results) else 1
 
