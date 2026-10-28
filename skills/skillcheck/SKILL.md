@@ -11,7 +11,7 @@ Runs prompts through the user's real `claude -p` / `codex exec` with everything 
 
 1. `../../skillcheck.py` relative to this skill's base directory (plugin install).
 2. Otherwise download a pinned copy into a temp folder and run it from there:
-   `curl -fsSL -o /tmp/skillcheck.py https://raw.githubusercontent.com/Noem836/skillcheck/v0.1.0/skillcheck.py`
+   `curl -fsSL -o /tmp/skillcheck.py https://raw.githubusercontent.com/Noem836/skillcheck/v0.1.2/skillcheck.py`
 
 Run it with `python3`. It needs only the standard library.
 

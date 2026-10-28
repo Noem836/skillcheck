@@ -29,7 +29,7 @@ As a Claude Code plugin (the `skillcheck` skill walks you through scan â†’ run â
 Or as one file (Python 3 standard library; PyYAML is used for frontmatter checks if installed). Pin a release and check its hash:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/Noem836/skillcheck/v0.1.0/skillcheck.py
+curl -fsSLO https://raw.githubusercontent.com/Noem836/skillcheck/v0.1.2/skillcheck.py
 shasum -a 256 skillcheck.py   # compare with the release notes
 ```
 
