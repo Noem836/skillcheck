@@ -1,9 +1,9 @@
 {
   "name": "skillcheck",
   "description": "Measure whether your Claude Code / Codex skills actually fire in your real setup, which skill steals the request, and whether a description fix helped.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {"name": "Noem836"},
-  "homepage": "https://skillcheck.vercel.app",
+  "homepage": "https://skillcheck-alpha.vercel.app",
   "repository": "https://github.com/Noem836/skillcheck",
   "license": "MIT",
   "keywords": ["skills", "testing", "triggering", "codex", "eval"]

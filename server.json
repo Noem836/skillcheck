@@ -3,16 +3,16 @@
   "name": "io.github.Noem836/skillcheck",
   "title": "skillcheck",
   "description": "Before installing an agent skill, see which of your skills it will clash with; static checks of SKILL.md repos.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "repository": {
     "url": "https://github.com/Noem836/skillcheck",
     "source": "github"
   },
-  "websiteUrl": "https://skillcheck.vercel.app",
+  "websiteUrl": "https://skillcheck-alpha.vercel.app",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://skillcheck.vercel.app/mcp"
+      "url": "https://skillcheck-alpha.vercel.app/mcp"
     }
   ]
 }

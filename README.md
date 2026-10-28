@@ -16,7 +16,7 @@ python3 skillcheck.py preflight path/to/new-skill --measure  # real runs: your s
 python3 skillcheck.py preflight path/to/new-skill --measure --skills my-a,my-b   # pick which of yours to measure
 ```
 
-[Example report](https://skillcheck.vercel.app/r/S1FWWO2UHQKwhlM3eBCXtw): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
+[Example report](https://skillcheck-alpha.vercel.app/r/S1FWWO2UHQKwhlM3eBCXtw): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
 
 ## Install
 
@@ -52,7 +52,7 @@ python3 skillcheck.py upload --tag before,after     # optional share link
 A hosted, read-only MCP server runs the static checks on any public GitHub repo, which is useful before installing or publishing a skill pack:
 
 ```bash
-claude mcp add --transport http skillcheck https://skillcheck.vercel.app/mcp
+claude mcp add --transport http skillcheck https://skillcheck-alpha.vercel.app/mcp
 ```
 
 Tools:
@@ -81,7 +81,7 @@ Runs use your own CLI login and subscription. Nothing is sent anywhere unless yo
 ## FAQ
 
 **Why isn't my Claude Code skill triggering?**
-Usually another installed skill wins the request, or the description reads as slash-command only ("use as /name"). Run `scan`, then `run` + `report` and look at the *taken by* column. See the [guide](https://skillcheck.vercel.app/guide/skill-not-triggering).
+Usually another installed skill wins the request, or the description reads as slash-command only ("use as /name"). Run `scan`, then `run` + `report` and look at the *taken by* column. See the [guide](https://skillcheck-alpha.vercel.app/guide/skill-not-triggering).
 
 **My skill passes `claude plugin eval` but doesn't fire in my normal setup. Why?**
 The official eval loads the skill in a clean environment. skillcheck measures it next to everything you actually have installed.
