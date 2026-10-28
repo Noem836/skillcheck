@@ -26,7 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from skillcheck import SITE, check, frontmatter, preflight_static, render_html, words
 
-DEMO = "S1FWWO2UHQKwhlM3eBCXtw"  # id of the example report on the live server
+DEMO = "6BtCIf6PaYA_uKkN19tYVg"  # id of the example report on the live server
 CLI = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "skillcheck.py"), "rb").read()
 
 MAX_BODY = 1_000_000

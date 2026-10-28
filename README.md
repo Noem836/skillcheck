@@ -16,7 +16,7 @@ python3 skillcheck.py preflight path/to/new-skill --measure  # real runs: your s
 python3 skillcheck.py preflight path/to/new-skill --measure --skills my-a,my-b   # pick which of yours to measure
 ```
 
-[Example report](https://skillcheck-alpha.vercel.app/r/S1FWWO2UHQKwhlM3eBCXtw): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
+[Example report](https://skillcheck-alpha.vercel.app/r/6BtCIf6PaYA_uKkN19tYVg): two skills went from 0/4 and 1/4 to 4/4 after rewriting their descriptions.
 
 ## Install
 
