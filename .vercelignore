@@ -1,0 +1,4 @@
+pe_test/
+smoke/
+__pycache__/
+*.db

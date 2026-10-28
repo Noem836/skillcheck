@@ -19,6 +19,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -393,8 +394,113 @@ class Store:
         return True
 
 
+class BlobStore:
+    API = "https://vercel.com/api/blob"
+    API_VERSION = "13"
+    # ponytail: per-instance memory, a shared counter (Blob/KV) if abuse shows up
+    def __init__(self, token=None, ip_key=None):
+        self.token = token or os.environ.get("BLOB_READ_WRITE_TOKEN", "")
+        key = ip_key or os.environ.get("SKILLCHECK_IP_KEY", "")
+        parts = self.token.split("_")
+        if len(parts) < 4 or parts[:3] != ["vercel", "blob", "rw"] or not parts[3]:
+            raise RuntimeError("BLOB_READ_WRITE_TOKEN is missing or invalid")
+        if not key:
+            raise RuntimeError("SKILLCHECK_IP_KEY is required with Blob storage")
+        self.store_id = parts[3]
+        self.ip_key = key.encode()
+        self.api_url = self.API
+        self.lock = threading.Lock()
+        self.uses = []
+
+    def _headers(self, **extra):
+        return {"Authorization": f"Bearer {self.token}", "x-api-version": self.API_VERSION,
+                "x-vercel-blob-store-id": self.store_id,
+                "x-api-blob-request-id": f"{self.store_id}:{time.time_ns()}:{secrets.token_hex(4)}",
+                "x-api-blob-request-attempt": "0", **extra}
+
+    def _request(self, url, method, body=None, headers=None):
+        req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
+    def _blob_url(self, pathname):
+        return f"https://{self.store_id}.public.blob.vercel-storage.com/{urllib.parse.quote(pathname, safe='/')}"
+
+    def who(self, ip):
+        return hmac.new(self.ip_key, ip.encode(), "sha256").hexdigest()
+
+    def _take(self, who, limit, now):
+        with self.lock:
+            self.uses = [(w, t) for w, t in self.uses if t > now - 3600]
+            if sum(w == who for w, _ in self.uses) >= limit:
+                return False
+            self.uses.append((who, now))
+        return True
+
+    def limited(self, who, now):
+        with self.lock:
+            self.uses = [(w, t) for w, t in self.uses if t > now - 3600]
+            return sum(w == who for w, _ in self.uses) >= UPLOADS_PER_HOUR
+
+    def add(self, rows, who):
+        now = time.time()
+        if not self._take(who, UPLOADS_PER_HOUR, now):
+            return None
+        rid, token = secrets.token_urlsafe(16), secrets.token_urlsafe(24)
+        pathname = f"r/{rid}.json"
+        data = json.dumps({"del": hashlib.sha256(token.encode()).hexdigest(), "created": int(now),
+                           "rows": rows}, separators=(",", ":")).encode()
+        url = self.api_url.rstrip("/") + "/?" + urllib.parse.urlencode({"pathname": pathname})
+        headers = self._headers(**{"x-add-random-suffix": "0", "x-allow-overwrite": "0",
+                                   "x-vercel-blob-access": "public", "x-content-type": "application/json"})
+        status, _ = self._request(url, "PUT", data, headers)
+        if status not in (200, 201):
+            with self.lock:
+                self.uses.remove((who, now))
+            raise RuntimeError(f"Blob upload failed with HTTP {status}")
+        return rid, token
+
+    def take(self, who, limit, now=None):
+        return self._take(who, limit, now or time.time())
+
+    def _get_doc(self, rid):
+        url = self._blob_url(f"r/{rid}.json")
+        status, body = self._request(url, "GET", headers={"Authorization": f"Bearer {self.token}"})
+        if status == 404:
+            return None
+        if status != 200:
+            raise RuntimeError(f"Blob read failed with HTTP {status}")
+        doc = json.loads(body)
+        return doc if isinstance(doc, dict) else None
+
+    def get(self, rid):
+        doc = self._get_doc(rid)
+        return doc.get("rows") if doc else None
+
+    def delete(self, rid, token):
+        doc = self._get_doc(rid)
+        if not doc or not hmac.compare_digest(doc.get("del", ""), hashlib.sha256(token.encode()).hexdigest()):
+            return False
+        url = self.api_url.rstrip("/") + "/delete"
+        body = json.dumps({"urls": [f"r/{rid}.json"]}).encode()
+        headers = self._headers(**{"Content-Type": "application/json"})
+        status, _ = self._request(url, "POST", body, headers)
+        if status == 404:
+            return False
+        if status not in (200, 201, 204):
+            raise RuntimeError(f"Blob delete failed with HTTP {status}")
+        return True
+
+
+def make_store(db="reports.db"):
+    return BlobStore() if os.environ.get("BLOB_READ_WRITE_TOKEN") else Store(db)
+
+
 class Handler(BaseHTTPRequestHandler):
-    store: Store = None
+    store = None
     timeout = 10  # drop clients that send too slowly
     server_version = "skillcheck"
     default_request_version = "HTTP/1.0"  # stdlib answers malformed lines as HTTP/0.9 = no headers at all
@@ -414,9 +520,13 @@ class Handler(BaseHTTPRequestHandler):
         super().end_headers()
 
     def client_ip(self):
-        # On Fly the socket peer is Fly's proxy, which sets Fly-Client-IP. check_web.py <url> tests spoofing.
-        if os.environ.get("FLY_APP_NAME") and self.headers.get("Fly-Client-IP"):
-            return self.headers["Fly-Client-IP"]
+        if os.environ.get("VERCEL"):
+            ip = self.headers.get("x-real-ip", "").strip()
+            if ip:
+                return ip
+            forwarded = self.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+            if forwarded:
+                return forwarded
         return self.client_address[0]
 
     def rid(self, prefix):
@@ -508,7 +618,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port=8787, db="reports.db", host="127.0.0.1"):
-    Handler.store = Store(db)
+    Handler.store = make_store(db)
     httpd = ThreadingHTTPServer((host, port), Handler)
     httpd.daemon_threads = True
     return httpd

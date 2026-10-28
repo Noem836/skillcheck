@@ -4,6 +4,9 @@
   python3 check_web.py <url>    → attacks a running server (Docker container, or the deployed site)
 """
 import json
+import importlib.util
+import http.server
+import os
 import re
 import socket
 import ssl
@@ -14,6 +17,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from unittest.mock import patch
 from pathlib import Path
 
 import server
@@ -51,6 +55,120 @@ def raw(data, wait=0.0):
         return ""
     finally:
         s.close()
+
+
+def check_blob_fake():
+    class FakeBlob(http.server.BaseHTTPRequestHandler):
+        objects = {}
+        headers_ok = {"put": False, "get": False, "delete": False}
+
+        def reply(self, code, body=b""):
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_PUT(self):
+            path = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("pathname", [""])[0]
+            type(self).headers_ok["put"] = (urllib.parse.urlsplit(self.path).path == "/api/blob/"
+                                             and re.fullmatch(r"r/[A-Za-z0-9_-]{22}\.json", path)
+                                             and self.headers.get("Authorization") == "Bearer vercel_blob_rw_teststore_fake"
+                                             and self.headers.get("x-api-version") == "13"
+                                             and self.headers.get("x-add-random-suffix") == "0"
+                                             and self.headers.get("x-allow-overwrite") == "0"
+                                             and self.headers.get("x-vercel-blob-access") == "public"
+                                             and self.headers.get("x-content-type") == "application/json"
+                                             and self.headers.get("x-vercel-blob-store-id") == "teststore")
+            type(self).objects[path] = self.rfile.read(int(self.headers["Content-Length"]))
+            self.reply(200, b"{}")
+
+        def do_GET(self):
+            path = urllib.parse.urlsplit(self.path).path.lstrip("/")
+            type(self).headers_ok["get"] = self.headers.get("Authorization") == "Bearer vercel_blob_rw_teststore_fake"
+            body = type(self).objects.get(path)
+            self.reply(200, body) if body is not None and type(self).headers_ok["get"] else self.reply(404)
+
+        def do_POST(self):
+            type(self).headers_ok["delete"] = (self.path == "/api/blob/delete"
+                                                and self.headers.get("Authorization") == "Bearer vercel_blob_rw_teststore_fake"
+                                                and self.headers.get("x-api-version") == "13"
+                                                and self.headers.get("x-vercel-blob-store-id") == "teststore")
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if not type(self).headers_ok["delete"]:
+                return self.reply(404)
+            for url in body["urls"]:
+                type(self).objects.pop(urllib.parse.urlsplit(url).path.lstrip("/"), None)
+            self.reply(200, b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeBlob)
+    threading.Thread(target=fake.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{fake.server_port}"
+    try:
+        store = server.BlobStore("vercel_blob_rw_teststore_fake", "fake-ip-key")
+        store.api_url = base + "/api/blob"
+        store._blob_url = lambda path: base + "/" + path
+        added = store.add([ROW], "client")
+        rid, token = added
+        saved = json.loads(FakeBlob.objects[f"r/{rid}.json"])
+        rows = store.get(rid)
+        wrong = store.delete(rid, "wrong")
+        deleted = store.delete(rid, token)
+        gone = store.get(rid) is None
+        ok = (all(FakeBlob.headers_ok.values()) and set(saved) == {"del", "created", "rows"}
+              and rows == [ROW] and not wrong and deleted and gone)
+        label = "Vercel Blob fake API put/get/delete" if ok else f"Vercel Blob fake API put/get/delete {FakeBlob.headers_ok}, rows={rows == [ROW]}, delete={deleted}, gone={gone}"
+        return [(label, ok)]
+    except Exception as e:
+        return [(f"Vercel Blob fake API put/get/delete ({type(e).__name__})", False)]
+    finally:
+        fake.shutdown()
+        fake.server_close()
+
+
+def check_vercel_ip():
+    class Request:
+        client_address = ("127.0.0.1", 1234)
+
+        def __init__(self, headers):
+            self.headers = headers
+
+    with patch.dict(os.environ, {"VERCEL": "1"}):
+        preferred = server.Handler.client_ip(Request({"x-real-ip": "192.0.2.1", "x-forwarded-for": "192.0.2.2, 192.0.2.3"}))
+        fallback = server.Handler.client_ip(Request({"x-forwarded-for": "198.51.100.1, 198.51.100.2"}))
+        peer = server.Handler.client_ip(Request({}))
+    return [("Vercel IP prefers x-real-ip", preferred == "192.0.2.1"),
+            ("Vercel IP falls back to first x-forwarded-for", fallback == "198.51.100.1"),
+            ("local IP fallback", peer == "127.0.0.1")]
+
+
+def check_vercel_path():
+    previous = server.Handler.store
+    path = Path(__file__).parent / "api" / "index.py"
+    spec = importlib.util.spec_from_file_location("skillcheck_vercel_entry_test", path)
+    module = importlib.util.module_from_spec(spec)
+    with patch.dict(os.environ, {"BLOB_READ_WRITE_TOKEN": "", "SKILLCHECK_IP_KEY": ""}):
+        spec.loader.exec_module(module)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), module.handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+    try:
+        code, _, body = req(base, "POST", "/api?__skillcheck_path=/api/reports", [ROW])
+        rid = json.loads(body)["url"][3:]
+        report = req(base, "GET", f"/api?__skillcheck_path=/r/{rid}")[0] == 200
+        static = req(base, "GET", "/api?__skillcheck_path=/llms.txt")[0] == 200
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}}
+        mcp_code, _, mcp_body = req(base, "POST", "/api?__skillcheck_path=/mcp", init)
+        mcp_ok = mcp_code == 200 and json.loads(mcp_body)["result"]["serverInfo"]["name"] == "skillcheck"
+        return [("Vercel rewrite restores report, static, and MCP paths", code == 201 and report and static and mcp_ok)]
+    except Exception as e:
+        return [(f"Vercel rewrite restores report, static, and MCP paths ({type(e).__name__})", False)]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        server.Handler.store = previous
 
 
 def main():
@@ -180,12 +298,18 @@ def main():
 
     # rate limit last (it uses up this IP's quota)
     # each upload claims a new client IP; a server that trusts it would never return 429
-    codes = [req(base, "POST", "/api/reports", [ROW], {"Fly-Client-IP": f"10.9.{i}.1", "X-Forwarded-For": f"10.8.{i}.1"})[0]
+    codes = [req(base, "POST", "/api/reports", [ROW], {"X-Real-IP": f"10.9.{i}.1", "X-Forwarded-For": f"10.8.{i}.1"})[0]
              for i in range(server.UPLOADS_PER_HOUR + 1)]
     check("rate limit → 429", 429 in codes)
     mcodes = [rpc({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": "check_skill_repo",
                   "arguments": {"github_url": "x"}}})[0] for i in range(server.MCP_PER_HOUR + 1)]
     check("MCP tool rate limit → 429", 429 in mcodes)
+    for name, ok in check_blob_fake():
+        check(name, ok)
+    for name, ok in check_vercel_ip():
+        check(name, ok)
+    for name, ok in check_vercel_path():
+        check(name, ok)
     if httpd:  # unit: the fetcher never follows a redirect (would let a repo host bounce us anywhere)
         import http.server
         class Bounce(http.server.BaseHTTPRequestHandler):
